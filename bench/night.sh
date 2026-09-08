@@ -103,18 +103,18 @@ if rows:
 PYEOF
 }
 
-# --- wait for the night brain (poll every 60s, give up after 6h) ---
+# --- wait for the night brain (poll every 60s, give up after 14h) ---
 WAIT_INTERVAL=60
-WAIT_MAX_SECS=$((6 * 3600))
+WAIT_MAX_SECS=$((14 * 3600))
 waited=0
-log "waiting for night brain :11467/health (poll ${WAIT_INTERVAL}s, giving up after 6h)"
+log "waiting for night brain :11467/health (poll ${WAIT_INTERVAL}s, giving up after 14h)"
 while true; do
     if curl -s --max-time 5 http://127.0.0.1:11467/health 2>/dev/null | grep -q '"ok"'; then
         log "night brain :11467 healthy after ${waited}s wait"
         break
     fi
     if [ "$waited" -ge "$WAIT_MAX_SECS" ]; then
-        log "gave up waiting for :11467 after 6h -- nothing to bench tonight, exiting"
+        log "gave up waiting for :11467 after 14h -- nothing to bench tonight, exiting"
         exit 0
     fi
     sleep "$WAIT_INTERVAL"
