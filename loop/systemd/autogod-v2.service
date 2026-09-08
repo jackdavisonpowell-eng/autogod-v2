@@ -1,0 +1,13 @@
+# loop/systemd/autogod-v2.service — one pass, day lane (the plain/default
+# service; the day timer points at this one directly).
+[Unit]
+Description=AUTOGOD v2 — one loop pass (day lane)
+After=network.target
+
+[Service]
+Type=oneshot
+Environment=AUTOGOD_LANE=day
+Environment=AUTOGOD_BUDGET_SECS=3600
+Environment=VAULT=%h/vault
+Environment=AUTOGOD_ROOT=%h/autogod-v2
+ExecStart=%h/autogod-v2/loop/run.sh

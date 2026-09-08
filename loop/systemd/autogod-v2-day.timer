@@ -1,0 +1,10 @@
+[Unit]
+Description=AUTOGOD v2 day pass — 13:00, lane=day, budget=3600s
+
+[Timer]
+OnCalendar=*-*-* 13:00:00
+Persistent=false
+Unit=autogod-v2.service
+
+[Install]
+WantedBy=timers.target

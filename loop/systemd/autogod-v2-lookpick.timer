@@ -1,0 +1,10 @@
+[Unit]
+Description=AUTOGOD v2 look+gate pass — 12:30 daily, no build
+
+[Timer]
+OnCalendar=*-*-* 12:30:00
+Persistent=false
+Unit=autogod-v2-lookpick.service
+
+[Install]
+WantedBy=timers.target

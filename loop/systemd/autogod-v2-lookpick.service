@@ -1,0 +1,14 @@
+# loop/systemd/autogod-v2-lookpick.service — LOOK + gate only, no build, no
+# judge (build-order step 2: candidate lists land in the vault so Jack can
+# circle one by hand, before the loop is trusted to build unattended).
+[Unit]
+Description=AUTOGOD v2 — look + pick --dry-run (no build)
+After=network.target
+
+[Service]
+Type=oneshot
+Environment=AUTOGOD_MODE=lookpick
+Environment=AUTOGOD_LANE=day
+Environment=VAULT=%h/vault
+Environment=AUTOGOD_ROOT=%h/autogod-v2
+ExecStart=%h/autogod-v2/loop/run.sh

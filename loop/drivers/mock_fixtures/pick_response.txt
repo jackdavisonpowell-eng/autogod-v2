@@ -1,0 +1,19 @@
+```yaml
+name: tire-pressure-check
+evidence: "I wish there was a script that tells me when my GR86 tire pressure drops below spec."  # Journal/2026-09-08.md:3
+sentence: "A script that reads the car's saved tire-pressure log and warns when any tire is under spec."
+outside: "Jack, when he starts the car in the morning"
+probe:
+  kind: exec
+  target: "tire-check"
+  keep_if: ">=3 runs in 7 days"
+milestone: "tire-check reads the latest logged pressures and prints OK or WARN per tire, runs in under a second"
+shape: "reads a local sensor log on demand and warns when a value crosses a threshold"
+```
+
+---PLAN---
+For Jack, who forgets to check tire pressure until it is already a problem.
+Number: tire-check run >=3 times in the 7 days after milestone (his own habit forming, or it dies).
+Milestone: tire_check.py reads the last logged tire-pressure reading per tire from a local
+log file and prints OK/WARN against a fixed PSI threshold; run.sh calls it.
+Files: run.sh, tire_check.py, sample_log.csv.

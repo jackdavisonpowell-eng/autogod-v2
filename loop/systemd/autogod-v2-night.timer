@@ -1,0 +1,10 @@
+[Unit]
+Description=AUTOGOD v2 night pass — 23:30, lane=night, budget=10800s
+
+[Timer]
+OnCalendar=*-*-* 23:30:00
+Persistent=false
+Unit=autogod-v2-night.service
+
+[Install]
+WantedBy=timers.target

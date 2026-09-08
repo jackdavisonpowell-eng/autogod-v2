@@ -1,0 +1,17 @@
+# loop/systemd/autogod-v2-night.service — one pass, night lane.
+# Not one of the literally-named deliverables, but required: a systemd timer
+# cannot inject different environment variables into a shared service unit,
+# so the night timer needs its own service to carry AUTOGOD_LANE=night and
+# the 3h budget. Everything else (ExecStart, working dir) is identical to
+# autogod-v2.service.
+[Unit]
+Description=AUTOGOD v2 — one loop pass (night lane)
+After=network.target
+
+[Service]
+Type=oneshot
+Environment=AUTOGOD_LANE=night
+Environment=AUTOGOD_BUDGET_SECS=10800
+Environment=VAULT=%h/vault
+Environment=AUTOGOD_ROOT=%h/autogod-v2
+ExecStart=%h/autogod-v2/loop/run.sh

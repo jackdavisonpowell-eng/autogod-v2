@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""Adapter proxy: folds trailing system-role messages (Qwen template rejects
+them) into the top-level system block, forwards to the local brain, streams
+the response back incrementally, and logs one JSON line per request.
+
+Config via env:
+  AUTOGOD_UPSTREAM    default http://127.0.0.1:11466
+  AUTOGOD_PROXY_PORT  default 11499
+  AUTOGOD_PROXY_LOG   default ~/autogod-v2/state/proxy.log
+"""
+import http.server, json, os, re, socketserver, sys, time, urllib.request, urllib.error
+
+UP = os.environ.get("AUTOGOD_UPSTREAM", "http://127.0.0.1:11466")
+PORT = int(os.environ.get("AUTOGOD_PROXY_PORT", "11499"))
+LOG = os.path.expanduser(os.environ.get("AUTOGOD_PROXY_LOG", "~/autogod-v2/state/proxy.log"))
+os.makedirs(os.path.dirname(LOG), exist_ok=True)
+
+def fold_system(d):
+    """Move any non-leading system-role message into d['system']; return folded count."""
+    msgs = d.get("messages", []); extra = []; keep = []
+    for m in msgs:
+        if m.get("role") == "system":
+            c = m.get("content")
+            extra.append(c if isinstance(c, str) else " ".join(x.get("text", "") for x in c if isinstance(x, dict)))
+        else:
+            keep.append(m)
+    if extra:
+        sysm = d.get("system") or []
+        if isinstance(sysm, str): sysm = [{"type": "text", "text": sysm}]
+        d["system"] = sysm + [{"type": "text", "text": t} for t in extra]
+        d["messages"] = keep
+    return len(extra)
+
+class H(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    def log_message(self, *a): pass
+
+    def do_POST(self):
+        n = int(self.headers.get("content-length", 0)); body = self.rfile.read(n)
+        rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "path": self.path}
+        try:
+            d = json.loads(body)
+            rec["roles"] = [m.get("role") for m in d.get("messages", [])]
+            rec["tools"] = len(d.get("tools", []))
+            rec["stream"] = bool(d.get("stream"))
+            rec["folded_system"] = fold_system(d)
+            body = json.dumps(d).encode()
+        except Exception as e:
+            rec["parse_error"] = str(e)
+
+        fwd_headers = {k: v for k, v in self.headers.items()
+                       if k.lower() in ("content-type", "anthropic-version", "accept")}
+        req = urllib.request.Request(UP + self.path, data=body, method="POST", headers=fwd_headers)
+        t0 = time.time()
+        in_tok = out_tok = None
+        try:
+            with urllib.request.urlopen(req, timeout=900) as r:
+                st = r.status; hdrs = r.headers
+                is_sse = "text/event-stream" in (hdrs.get("content-type") or "")
+                self.send_response(st)
+                for k in ("content-type",):
+                    if hdrs.get(k): self.send_header(k, hdrs.get(k))
+                if is_sse:
+                    self.send_header("cache-control", "no-cache")
+                self.send_header("transfer-encoding", "chunked")
+                self.end_headers()
+                for chunk in iter(lambda: r.read(4096), b""):
+                    if is_sse:
+                        in_tok, out_tok = parse_usage(chunk, in_tok, out_tok)
+                    self.wfile.write(("%x\r\n" % len(chunk)).encode() + chunk + b"\r\n")
+                self.wfile.write(b"0\r\n\r\n")
+        except urllib.error.HTTPError as e:
+            st = e.code; data = e.read()
+            rec["err"] = data[:200].decode(errors="ignore")
+            self.send_response(st)
+            self.send_header("content-length", str(len(data))); self.end_headers()
+            self.wfile.write(data)
+        except Exception as e:
+            st = 502; rec["err"] = str(e)[:200]
+            self.send_response(st); self.send_header("content-length", "0"); self.end_headers()
+        rec["status"] = st; rec["secs"] = round(time.time() - t0, 1)
+        if in_tok is not None: rec["input_tokens"] = in_tok
+        if out_tok is not None: rec["output_tokens"] = out_tok
+        with open(LOG, "a") as f: f.write(json.dumps(rec) + "\n")
+
+USAGE_RE = re.compile(rb'"usage"\s*:\s*(\{[^}]*\})')
+
+def parse_usage(chunk, in_tok, out_tok):
+    for m in USAGE_RE.finditer(chunk):
+        try:
+            u = json.loads(m.group(1))
+        except Exception:
+            continue
+        if "input_tokens" in u: in_tok = u["input_tokens"]
+        if "output_tokens" in u: out_tok = u["output_tokens"]
+    return in_tok, out_tok
+
+if __name__ == "__main__":
+    socketserver.ThreadingTCPServer.allow_reuse_address = True
+    class Srv(socketserver.ThreadingTCPServer):
+        allow_reuse_address = True
+    Srv(("127.0.0.1", PORT), H).serve_forever()

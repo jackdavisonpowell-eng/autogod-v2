@@ -1,0 +1,19 @@
+```yaml
+name: old-tire-thing-v2
+evidence: "I wish there was a script that tells me when my GR86 tire pressure drops below spec."  # Journal/2026-09-08.md:3
+sentence: "A script that reads the car's saved tire-pressure log and warns when any tire is under spec."
+outside: "Jack, when he starts the car in the morning"
+probe:
+  kind: exec
+  target: "tire-check-2"
+  keep_if: ">=3 runs in 7 days"
+milestone: "tire-check-2 reads the latest logged pressures and prints OK or WARN per tire"
+shape: "reads a local sensor log on demand and warns when a value crosses a threshold"
+```
+
+---PLAN---
+Same idea as an already-dead project, just reworded — this fixture exists to
+prove pick.py's fuzzy shape-vs-dead.md check catches a reworded duplicate.
+Number: n/a, this candidate is expected to be refused.
+Milestone: n/a.
+Files: run.sh.

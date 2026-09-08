@@ -1,0 +1,23 @@
+# Copied verbatim from ~/.dsh/settings.yaml on thebeast (DSH_HOME default).
+# Registers the local llama.cpp brain as an OpenAI-compatible custom provider
+# route named "autogod", and makes it the default model for fresh agents
+# (including the one-shot headless runner).
+#
+# Namespace keys ("llm-pi-ai", "agent-default-model") match the plugin `id`
+# values from `dsh --profile headless --dump-config`, not the npm package
+# names — that's how the settings-file provider maps a YAML section to a
+# plugin's settings seam.
+
+llm-pi-ai:
+  providers:
+    autogod:
+      displayName: AUTOGOD llama.cpp
+      api: openai-completions
+      baseURL: http://127.0.0.1:11466/v1
+      apiKeyEnv: DSH_LOCAL_API_KEY
+      models:
+        - id: autogod
+          name: autogod
+agent-default-model:
+  provider: autogod
+  model: autogod

@@ -1,0 +1,7 @@
+{
+  "session_id": "mock-session-1",
+  "exit_code": 0,
+  "num_turns": 3,
+  "is_error": false,
+  "seconds": 2.5
+}

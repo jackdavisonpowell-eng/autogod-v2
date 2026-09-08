@@ -1,0 +1,6 @@
+state/current/
+state/usage.log
+state/candidates/
+*.log
+__pycache__/
+.venv/
