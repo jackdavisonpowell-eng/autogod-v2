@@ -24,6 +24,19 @@ try to locate the on-disk session transcript
 transcript format is internal to Claude Code and may not match at any
 given version, so this is wrapped in try/except and simply left as None
 if anything doesn't line up.
+
+Upstream preflight (bugfix, 2026-09-08): found while dry-running against the
+night proxy (:11498) with the V100 night brain (:11467) deliberately down.
+The proxy itself answers instantly with a clean 502 per request (confirmed
+in state/proxy-night.log), but the Claude Code CLI's own HTTP client retries
+5xx responses with backoff regardless -- so the *process* doesn't exit until
+bench/run.py's hard budget_secs kill, even though the real answer ("upstream
+is down") was known in under a second. That's not "fail fast and cleanly",
+it's "fail slow and get killed". Before spawning the CLI we now do one quick
+direct probe of ANTHROPIC_BASE_URL ourselves (a few-second timeout, no
+retries) so an unreachable/5xx upstream is reported immediately without
+waiting out the CLI's retry loop or the task's full budget. Skipped entirely
+if ANTHROPIC_BASE_URL isn't set (real api.anthropic.com is not preflighted).
 """
 import glob
 import json
@@ -31,8 +44,49 @@ import os
 import signal
 import subprocess
 import time
+import urllib.error
+import urllib.request
 
 _HELP_CACHE = {}
+PREFLIGHT_TIMEOUT_SECS = 5
+
+
+def _preflight_upstream(env, timeout=PREFLIGHT_TIMEOUT_SECS):
+    """Return (ok, detail). ok=True means either there's nothing to check
+    (no ANTHROPIC_BASE_URL override) or the endpoint proved it has a live
+    upstream behind it within `timeout` seconds.
+
+    We deliberately POST an empty '{}' body, so ANY real HTTP response --
+    even a 4xx/5xx application-level error like "'messages' is required"
+    -- proves the upstream is alive and answering (confirmed live 2026-09-08
+    against the day brain on :11466/:11499: a real, busy upstream answers
+    the malformed preflight with its own 500, not a transport failure).
+    bench/proxy/adapter-proxy.py's own convention is what makes this safe
+    to interpret: it returns exactly HTTP 502 with an EMPTY body only when
+    it itself failed to reach the upstream at the transport level (caught
+    as a bare `except Exception`, before the `except HTTPError` clause that
+    handles and forwards a real upstream response/status verbatim); any
+    other status code -- including other 5xx -- means a real server
+    answered. A bare connection failure straight to a non-proxied
+    ANTHROPIC_BASE_URL (no proxy in front at all) surfaces the same way,
+    as a generic exception with no HTTP status."""
+    base = (env or {}).get("ANTHROPIC_BASE_URL")
+    if not base:
+        return True, "no ANTHROPIC_BASE_URL override, skipping preflight"
+    url = base.rstrip("/") + "/v1/messages"
+    req = urllib.request.Request(
+        url, data=b"{}", method="POST",
+        headers={"content-type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return True, f"preflight {url} -> HTTP {r.status}"
+    except urllib.error.HTTPError as e:
+        if e.code == 502:
+            return False, f"preflight {url} -> HTTP 502 (proxy could not reach upstream)"
+        return True, f"preflight {url} -> HTTP {e.code} (upstream is alive and answered)"
+    except Exception as e:
+        return False, f"preflight {url} -> {type(e).__name__}: {e} (no response at all)"
 
 
 def _cli_supports_max_turns():
@@ -109,6 +163,17 @@ def run(prompt, cwd, budget_secs, max_turns, env):
     }
 
     t0 = time.time()
+
+    ok, detail = _preflight_upstream(env)
+    if not ok:
+        with open(raw_log_path, "w") as f:
+            f.write(f"preflight failed, claude was never started: {detail}\n")
+        out["exit_code"] = 503
+        out["is_error"] = True
+        out["result"] = f"preflight failed: {detail}"
+        out["wall_secs"] = round(time.time() - t0, 1)
+        return out
+
     proc = subprocess.Popen(
         cmd, cwd=cwd, env=env,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

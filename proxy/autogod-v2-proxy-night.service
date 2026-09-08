@@ -1,0 +1,15 @@
+[Unit]
+Description=AUTOGOD v2 adapter proxy, NIGHT (Claude Code -> V100 night brain :11467, system-fold)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env python3 %h/autogod-v2/proxy/adapter-proxy.py
+Environment=AUTOGOD_UPSTREAM=http://127.0.0.1:11467
+Environment=AUTOGOD_PROXY_PORT=11498
+Environment=AUTOGOD_PROXY_LOG=%h/autogod-v2/state/proxy-night.log
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

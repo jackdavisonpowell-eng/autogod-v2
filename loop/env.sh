@@ -24,3 +24,8 @@ export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="${CLAUDE_CODE_DISABLE_NONESSENT
 
 export VAULT="${VAULT:-/data/vault}"
 export AUTOGOD_ROOT="${AUTOGOD_ROOT:-$HOME/autogod-v2}"
+
+# Claude Code CLI: the nvm-installed copy (2.1.265, npm under ~/.nvm, no root) is the one
+# the bench and the loop both use; ~/.local/bin/claude (2.1.220) is the older probe-only copy.
+_nvm_bin="$(ls -d "$HOME"/.nvm/versions/node/v22*/bin 2>/dev/null | tail -1)"
+[ -n "$_nvm_bin" ] && export PATH="$_nvm_bin:$PATH"
