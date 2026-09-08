@@ -40,7 +40,7 @@ for i in $(seq -w 1 "$N"); do
     rm -f "$WORKDIR/$FNAME"
     TASK="Create a file ${FNAME} containing the word autogod, then read it back and reply DONE"
     T0=$(date +%s.%N)
-    LOG_START=$(date -u +%Y-%m-%dT%H:%M:%S)
+    LOG_START=$(date +%Y-%m-%dT%H:%M:%S)  # local time: matches adapter-proxy.py's time.strftime()
     sleep 1  # ensure this run's proxy-log window doesn't collide with the prior run's tail
 
     if [ "$n" -eq 1 ] || is_cold "$n" || [ -z "$SESSION_ID" ]; then
@@ -55,7 +55,7 @@ for i in $(seq -w 1 "$N"); do
         RC=$?
     fi
     T1=$(date +%s.%N)
-    LOG_END=$(date -u +%Y-%m-%dT%H:%M:%S)
+    LOG_END=$(date +%Y-%m-%dT%H:%M:%S)  # local time: matches adapter-proxy.py's time.strftime()
     SECS=$(awk -v a="$T0" -v b="$T1" 'BEGIN{printf "%.1f", b-a}')
     echo "$RAW" > "$RUNDIR/out.json"
 
