@@ -52,6 +52,9 @@ class H(http.server.BaseHTTPRequestHandler):
             rec["tools"] = len(d.get("tools", []))
             rec["stream"] = bool(d.get("stream"))
             rec["folded_system"] = fold_system(d)
+            # llama-server re-prefilled all 32k tokens every turn on this endpoint
+            # (n_prompt_tokens_cache = 0, 2026-09-09); ask for the prompt cache explicitly.
+            d.setdefault("cache_prompt", True)
             th = d.get("thinking")
             if isinstance(th, dict):
                 rec["thinking_param"] = th
