@@ -64,6 +64,11 @@ class H(http.server.BaseHTTPRequestHandler):
                     th["budget_tokens"] = min(int(th.get("budget_tokens") or THINK_BUDGET), THINK_BUDGET)
                 rec["think_budget"] = THINK_BUDGET
             body = json.dumps(d).encode()
+            dump = os.environ.get("AUTOGOD_PROXY_DUMP")
+            if dump and d.get("tools"):
+                try:
+                    with open(dump, "wb") as f: f.write(body)
+                except OSError: pass
         except Exception as e:
             rec["parse_error"] = str(e)
 
