@@ -13,6 +13,11 @@ import http.server, json, os, re, socketserver, sys, time, urllib.request, urlli
 UP = os.environ.get("AUTOGOD_UPSTREAM", "http://127.0.0.1:11466")
 PORT = int(os.environ.get("AUTOGOD_PROXY_PORT", "11499"))
 LOG = os.path.expanduser(os.environ.get("AUTOGOD_PROXY_LOG", "~/autogod-v2/state/proxy.log"))
+# Per-request cap on the brain's reasoning (llama-server: reasoning_budget_tokens).
+# Uncapped, the 27B thinks for 10 minutes on a "pick an idea" turn and Claude Code's
+# client times out with nothing (2026-09-09). 0 = don't inject.
+THINK_BUDGET = int(os.environ.get("AUTOGOD_REASONING_BUDGET", "3072"))
+THINK_RE = re.compile(rb'"thinking"\s*:\s*"((?:[^"\\]|\\.)*)"')
 os.makedirs(os.path.dirname(LOG), exist_ok=True)
 
 def fold_system(d):
@@ -44,6 +49,9 @@ class H(http.server.BaseHTTPRequestHandler):
             rec["tools"] = len(d.get("tools", []))
             rec["stream"] = bool(d.get("stream"))
             rec["folded_system"] = fold_system(d)
+            if THINK_BUDGET and "reasoning_budget_tokens" not in d and "thinking_budget_tokens" not in d:
+                d["reasoning_budget_tokens"] = THINK_BUDGET
+                rec["think_budget"] = THINK_BUDGET
             body = json.dumps(d).encode()
         except Exception as e:
             rec["parse_error"] = str(e)
@@ -53,6 +61,7 @@ class H(http.server.BaseHTTPRequestHandler):
         req = urllib.request.Request(UP + self.path, data=body, method="POST", headers=fwd_headers)
         t0 = time.time()
         in_tok = out_tok = None
+        think_chars = 0
         try:
             with urllib.request.urlopen(req, timeout=900) as r:
                 st = r.status; hdrs = r.headers
@@ -67,6 +76,7 @@ class H(http.server.BaseHTTPRequestHandler):
                 for chunk in iter(lambda: r.read(4096), b""):
                     if is_sse:
                         in_tok, out_tok = parse_usage(chunk, in_tok, out_tok)
+                        for m in THINK_RE.finditer(chunk): think_chars += len(m.group(1))
                     self.wfile.write(("%x\r\n" % len(chunk)).encode() + chunk + b"\r\n")
                 self.wfile.write(b"0\r\n\r\n")
         except urllib.error.HTTPError as e:
@@ -81,6 +91,7 @@ class H(http.server.BaseHTTPRequestHandler):
         rec["status"] = st; rec["secs"] = round(time.time() - t0, 1)
         if in_tok is not None: rec["input_tokens"] = in_tok
         if out_tok is not None: rec["output_tokens"] = out_tok
+        if think_chars: rec["thinking_chars"] = think_chars
         with open(LOG, "a") as f: f.write(json.dumps(rec) + "\n")
 
 USAGE_RE = re.compile(rb'"usage"\s*:\s*(\{[^}]*\})')
