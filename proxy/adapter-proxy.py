@@ -17,6 +17,9 @@ LOG = os.path.expanduser(os.environ.get("AUTOGOD_PROXY_LOG", "~/autogod-v2/state
 # Uncapped, the 27B thinks for 10 minutes on a "pick an idea" turn and Claude Code's
 # client times out with nothing (2026-09-09). 0 = don't inject.
 THINK_BUDGET = int(os.environ.get("AUTOGOD_REASONING_BUDGET", "3072"))
+# Hard wall-clock cap per turn: a turn that streams for longer than this is cut off
+# (the 27B otherwise thinks for 20+ minutes and the harness budget kills the whole pass).
+TURN_MAX = int(os.environ.get("AUTOGOD_TURN_MAX_SECS", "900"))
 THINK_RE = re.compile(rb'"thinking"\s*:\s*"((?:[^"\\]|\\.)*)"')
 os.makedirs(os.path.dirname(LOG), exist_ok=True)
 
@@ -49,8 +52,13 @@ class H(http.server.BaseHTTPRequestHandler):
             rec["tools"] = len(d.get("tools", []))
             rec["stream"] = bool(d.get("stream"))
             rec["folded_system"] = fold_system(d)
-            if THINK_BUDGET and "reasoning_budget_tokens" not in d and "thinking_budget_tokens" not in d:
+            th = d.get("thinking")
+            if isinstance(th, dict):
+                rec["thinking_param"] = th
+            if THINK_BUDGET:
                 d["reasoning_budget_tokens"] = THINK_BUDGET
+                if isinstance(th, dict) and th.get("type") == "enabled":
+                    th["budget_tokens"] = min(int(th.get("budget_tokens") or THINK_BUDGET), THINK_BUDGET)
                 rec["think_budget"] = THINK_BUDGET
             body = json.dumps(d).encode()
         except Exception as e:
@@ -74,6 +82,9 @@ class H(http.server.BaseHTTPRequestHandler):
                 self.send_header("transfer-encoding", "chunked")
                 self.end_headers()
                 for chunk in iter(lambda: r.read(4096), b""):
+                    if time.time() - t0 > TURN_MAX:
+                        rec["turn_cap"] = TURN_MAX
+                        break
                     if is_sse:
                         in_tok, out_tok = parse_usage(chunk, in_tok, out_tok)
                         for m in THINK_RE.finditer(chunk): think_chars += len(m.group(1))
