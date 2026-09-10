@@ -8,7 +8,7 @@ Config via env:
   AUTOGOD_PROXY_PORT  default 11499
   AUTOGOD_PROXY_LOG   default ~/autogod-v2/state/proxy.log
 """
-import http.server, json, os, re, socketserver, sys, time, urllib.request, urllib.error
+import hashlib, http.server, json, os, re, socketserver, sys, time, urllib.request, urllib.error
 
 UP = os.environ.get("AUTOGOD_UPSTREAM", "http://127.0.0.1:11466")
 PORT = int(os.environ.get("AUTOGOD_PROXY_PORT", "11499"))
@@ -29,6 +29,10 @@ os.makedirs(os.path.dirname(LOG), exist_ok=True)
 # prompt = a full re-prefill of the whole 35-52k context (~250 s/turn, measured 2026-09-09).
 # Strip those blocks so the system prefix is byte-identical turn to turn.
 TOTAL_TOKENS_RE = re.compile(r"\s*<total_tokens>[^<]*</total_tokens>\s*")
+# Claude Code also injects one-off nudges into the system array mid-session ("The task
+# tools haven't been used recently ... This is just a gentle reminder"). Same effect: the
+# prefix changes, the whole context re-prefills. They carry nothing the loop needs.
+NUDGE_MARKERS = ("This is just a gentle reminder",)
 
 def strip_total_tokens(d):
     """Remove <total_tokens> blocks from d['system']; return how many were touched."""
@@ -41,12 +45,15 @@ def strip_total_tokens(d):
         return n
     n = 0; keep = []
     for b in sysm:
-        if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str) \
-                and "<total_tokens>" in b["text"]:
-            text, k = TOTAL_TOKENS_RE.subn("", b["text"]); n += k
-            if not text.strip():
-                continue          # the block was nothing but the counter — drop it
-            b = dict(b, text=text)
+        if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str):
+            if any(m in b["text"] for m in NUDGE_MARKERS):
+                n += 1
+                continue
+            if "<total_tokens>" in b["text"]:
+                text, k = TOTAL_TOKENS_RE.subn("", b["text"]); n += k
+                if not text.strip():
+                    continue      # the block was nothing but the counter — drop it
+                b = dict(b, text=text)
         keep.append(b)
     d["system"] = keep
     return n
@@ -81,6 +88,15 @@ class H(http.server.BaseHTTPRequestHandler):
             rec["stream"] = bool(d.get("stream"))
             rec["folded_system"] = fold_system(d)
             rec["stripped_total_tokens"] = strip_total_tokens(d)
+            # prefix-stability audit: same hash turn to turn == the system prompt is cacheable
+            sysm = d.get("system") or []
+            sys_text = sysm if isinstance(sysm, str) else "".join(
+                b.get("text", "") for b in sysm if isinstance(b, dict))
+            rec["sys_blocks"] = 1 if isinstance(sysm, str) else len(sysm)
+            rec["sys_hash"] = hashlib.md5(sys_text.encode()).hexdigest()[:8]
+            m0 = (d.get("messages") or [{}])[0].get("content")
+            m0 = m0 if isinstance(m0, str) else json.dumps(m0, sort_keys=True)
+            rec["msg0_hash"] = hashlib.md5((m0 or "").encode()).hexdigest()[:8]
             # llama-server re-prefilled all 32k tokens every turn on this endpoint
             # (n_prompt_tokens_cache = 0, 2026-09-09); ask for the prompt cache explicitly.
             d.setdefault("cache_prompt", True)
