@@ -23,6 +23,34 @@ TURN_MAX = int(os.environ.get("AUTOGOD_TURN_MAX_SECS", "900"))
 THINK_RE = re.compile(rb'"thinking"\s*:\s*"((?:[^"\\]|\\.)*)"')
 os.makedirs(os.path.dirname(LOG), exist_ok=True)
 
+# Claude Code appends a fresh `<total_tokens>N tokens left</total_tokens>` text block to
+# the system array every turn. Qwen3.5 is a hybrid model: llama.cpp can only restore
+# its KV cache at checkpoints (user-message starts), so ANY change inside the system
+# prompt = a full re-prefill of the whole 35-52k context (~250 s/turn, measured 2026-09-09).
+# Strip those blocks so the system prefix is byte-identical turn to turn.
+TOTAL_TOKENS_RE = re.compile(r"\s*<total_tokens>[^<]*</total_tokens>\s*")
+
+def strip_total_tokens(d):
+    """Remove <total_tokens> blocks from d['system']; return how many were touched."""
+    sysm = d.get("system")
+    if not sysm:
+        return 0
+    if isinstance(sysm, str):
+        new, n = TOTAL_TOKENS_RE.subn("", sysm)
+        if n: d["system"] = new
+        return n
+    n = 0; keep = []
+    for b in sysm:
+        if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str) \
+                and "<total_tokens>" in b["text"]:
+            text, k = TOTAL_TOKENS_RE.subn("", b["text"]); n += k
+            if not text.strip():
+                continue          # the block was nothing but the counter — drop it
+            b = dict(b, text=text)
+        keep.append(b)
+    d["system"] = keep
+    return n
+
 def fold_system(d):
     """Move any non-leading system-role message into d['system']; return folded count."""
     msgs = d.get("messages", []); extra = []; keep = []
@@ -52,6 +80,7 @@ class H(http.server.BaseHTTPRequestHandler):
             rec["tools"] = len(d.get("tools", []))
             rec["stream"] = bool(d.get("stream"))
             rec["folded_system"] = fold_system(d)
+            rec["stripped_total_tokens"] = strip_total_tokens(d)
             # llama-server re-prefilled all 32k tokens every turn on this endpoint
             # (n_prompt_tokens_cache = 0, 2026-09-09); ask for the prompt cache explicitly.
             d.setdefault("cache_prompt", True)
