@@ -8,7 +8,7 @@ Config via env:
   AUTOGOD_PROXY_PORT  default 11499
   AUTOGOD_PROXY_LOG   default ~/autogod-v2/state/proxy.log
 """
-import threading, hashlib, http.server, json, os, re, socketserver, sys, time, urllib.request, urllib.error
+import hashlib, http.server, json, os, re, socketserver, sys, time, urllib.request, urllib.error
 
 UP = os.environ.get("AUTOGOD_UPSTREAM", "http://127.0.0.1:11466")
 PORT = int(os.environ.get("AUTOGOD_PROXY_PORT", "11499"))
@@ -134,42 +134,15 @@ class H(http.server.BaseHTTPRequestHandler):
                     self.send_header("cache-control", "no-cache")
                 self.send_header("transfer-encoding", "chunked")
                 self.end_headers()
-                # 2026-09-13: two first-byte fixes. read1() hands over each SSE
-                # event as it lands (read(4096) blocked until 4 KB piled up), and a
-                # keepalive thread writes an SSE comment every 10 s of upstream
-                # silence -- the 27B spends minutes prompt-processing an 80K
-                # context and Claude Code gives up ("Streaming response ended
-                # before any complete data was received") when nothing arrives.
-                wlock = threading.Lock()
-                last = [time.time()]
-                done = threading.Event()
-                def keepalive():
-                    while not done.wait(2.0):
-                        if is_sse and time.time() - last[0] > 10:
-                            with wlock:
-                                if done.is_set(): return
-                                try:
-                                    self.wfile.write(b"d\r\n: keepalive\n\n\r\n"); self.wfile.flush()
-                                except OSError:
-                                    return
-                            last[0] = time.time()
-                            rec["keepalives"] = rec.get("keepalives", 0) + 1
-                ka = threading.Thread(target=keepalive, daemon=True); ka.start()
-                try:
-                    for chunk in iter(lambda: r.read1(4096), b""):
-                        if time.time() - t0 > TURN_MAX:
-                            rec["turn_cap"] = TURN_MAX
-                            break
-                        if is_sse:
-                            in_tok, out_tok = parse_usage(chunk, in_tok, out_tok)
-                            for m in THINK_RE.finditer(chunk): think_chars += len(m.group(1))
-                        with wlock:
-                            self.wfile.write(("%x\r\n" % len(chunk)).encode() + chunk + b"\r\n"); self.wfile.flush()
-                        last[0] = time.time()
-                finally:
-                    done.set()
-                with wlock:
-                    self.wfile.write(b"0\r\n\r\n"); self.wfile.flush()
+                for chunk in iter(lambda: r.read(4096), b""):
+                    if time.time() - t0 > TURN_MAX:
+                        rec["turn_cap"] = TURN_MAX
+                        break
+                    if is_sse:
+                        in_tok, out_tok = parse_usage(chunk, in_tok, out_tok)
+                        for m in THINK_RE.finditer(chunk): think_chars += len(m.group(1))
+                    self.wfile.write(("%x\r\n" % len(chunk)).encode() + chunk + b"\r\n")
+                self.wfile.write(b"0\r\n\r\n")
         except urllib.error.HTTPError as e:
             st = e.code; data = e.read()
             rec["err"] = data[:200].decode(errors="ignore")
